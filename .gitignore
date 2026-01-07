@@ -11,6 +11,7 @@ VISUALIZATION_MAPPING.md
 aws-migration/*.md
 aws-migration/**/*.md
 !aws-migration/README.md
+!aws-migration/PIPELINE_WORKFLOW.md
 aws-migration/role-arn.txt
 
 # Large Data Files
