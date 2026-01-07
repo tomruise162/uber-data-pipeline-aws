@@ -7,11 +7,7 @@ DAX_FORMULAS_QUICK_REFERENCE.txt
 POWER_BI_VISUALIZATION_GUIDE.md
 VISUALIZATION_MAPPING.md
 
-# AWS Migration Guide Files
-aws-migration/*.md
-aws-migration/**/*.md
-!aws-migration/README.md
-!aws-migration/PIPELINE_WORKFLOW.md
+# AWS Migration - Only ignore sensitive files
 aws-migration/role-arn.txt
 
 # Large Data Files
@@ -20,7 +16,8 @@ data/**/*.csv
 
 # Power BI Report Files (large binary files)
 report/*.pbix
-report/*.pdf
+# Allow PDF reports to be committed
+!report/*.pdf
 
 # Python
 __pycache__/

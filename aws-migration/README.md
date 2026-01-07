@@ -61,7 +61,7 @@ For the sample dataset (~100KB):
 
 **Total**: < $10/month for occasional runs
 
-## ⚠️ Important: Creating Tables in Glue Data Catalog
+## Important: Creating Tables in Glue Data Catalog
 
 **RECOMMENDED Approach:** Use Glue Crawler to create tables (see Step 5 below)
 

@@ -1,212 +1,254 @@
-# Pipeline Workflow - Hướng dẫn đúng quy trình
+# Pipeline Workflow Documentation
 
-## Vấn đề quan trọng: Tạo Tables trong Glue Data Catalog
+## Overview
 
-### Vấn đề ban đầu
+This document describes the complete workflow for deploying and operating the Uber ETL pipeline on AWS. The pipeline uses AWS Glue for ETL processing, S3 for data storage, Glue Data Catalog for metadata management, and Amazon Athena for querying. Visualization is performed using Power BI.
 
-Pipeline ban đầu có **Load job** (`load_job.py`) sử dụng `saveAsTable()` để tạo tables trong Glue Data Catalog. Tuy nhiên:
+## Architecture Overview
 
-- **`saveAsTable()` KHÔNG đảm bảo** tạo table trong Glue Data Catalog
-- Spark mặc định dùng **local Hive metastore** (Athena không thấy được)
-- Cần cấu hình **Glue Catalog metastore** thì `saveAsTable()` mới hoạt động
+The pipeline follows a serverless architecture pattern:
 
-### Giải pháp
-
-Có 2 cách để tạo tables trong Glue Data Catalog:
-
-#### **Option 1: Dùng Glue Crawler (RECOMMENDED)**
-
-Đây là cách **đơn giản và đáng tin cậy nhất** cho Data Lake + Athena:
-
-1. Transform job ghi Parquet files vào S3
-2. Crawler scan S3 folders và tự động tạo table schemas
-3. Tables xuất hiện trong Glue Data Catalog
-4. Query được với Athena
-
-**Ưu điểm:**
-- Crawler tự động infer schema từ Parquet
-- Không cần cấu hình Spark metastore
-- Best practice cho Data Lake architecture
-- Dễ maintain và debug
-
-#### **Option 2: Sửa Load job để bind với Glue Catalog**
-
-Nếu vẫn muốn dùng Load job, cần thêm cấu hình:
-
-```python
-spark.conf.set("spark.sql.catalogImplementation", "hive")
-spark.conf.set(
-    "hive.metastore.client.factory.class",
-    "com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory"
-)
+```
+Raw CSV Data (S3)
+    ↓
+[Extract Job] → Parquet Files (processed-data/extracted/)
+    ↓
+[Transform Job] → Star Schema Parquet Files (8 dimension/fact tables)
+    ↓
+[Glue Crawler] → Tables in Glue Data Catalog
+    ↓
+[Amazon Athena] → SQL Queries
+    ↓
+[Power BI] → Business Intelligence Dashboards
 ```
 
-**Nhược điểm:**
-- Phức tạp hơn Crawler
-- Dễ gây nhầm lẫn cho beginner
-- Vẫn khuyến nghị dùng Crawler
+## Key Design Decisions
 
----
+### Table Creation Strategy
 
-## Quy trình đúng (RECOMMENDED)
+The pipeline uses **AWS Glue Crawler** to create tables in the Glue Data Catalog instead of using Spark's `saveAsTable()` method. This approach is recommended because:
 
-### Step 1: Upload dữ liệu và scripts
-```bash
-01-upload-to-s3.bat
-```
-- Upload raw data lên S3
-- Upload Glue scripts lên S3
-- Tạo folder structure
+1. **Reliability**: Crawler automatically infers schema from Parquet files
+2. **Simplicity**: No need to configure Spark metastore connections
+3. **Best Practice**: Aligns with AWS Data Lake architecture patterns
+4. **Maintainability**: Easier to debug and update table schemas
 
-### Step 2: Tạo IAM Role
-```bash
-02-create-iam-role.bat
-```
-- Tạo role với đủ quyền:
+**Alternative Approach**: The Load job (`load_job.py`) can be configured to use Glue Catalog by setting Spark configuration, but this is more complex and not recommended for beginners.
+
+## Deployment Workflow
+
+### Step 1: Upload Data and Scripts
+
+**Script**: `01-upload-to-s3.bat`
+
+**Actions**:
+- Uploads raw CSV data to S3 bucket
+- Uploads Glue job scripts to S3
+- Creates required folder structure in S3
+
+**Prerequisites**:
+- AWS CLI configured with appropriate credentials
+- S3 bucket created
+
+### Step 2: Create IAM Role
+
+**Script**: `02-create-iam-role.bat`
+
+**Actions**:
+- Creates IAM role for AWS Glue jobs
+- Attaches policies for:
   - S3 access (GetObject, PutObject, ListBucket)
-  - **Glue Catalog access (CreateTable, UpdateTable)** ← QUAN TRỌNG
-  - CloudWatch Logs
+  - Glue Catalog access (CreateTable, UpdateTable) - **Required**
+  - CloudWatch Logs for monitoring
 
-### Step 3: Tạo Glue Database và Jobs
-```bash
-03-create-glue-jobs.bat
+**Important**: The IAM role must have Glue Catalog permissions to create tables.
+
+### Step 3: Create Glue Database and Jobs
+
+**Script**: `03-create-glue-jobs.bat`
+
+**Actions**:
+- Creates Glue database: `uber_data_db`
+- Creates Extract job: `uber-etl-extract-job`
+- Creates Transform job: `uber-etl-transform-job`
+- Load job is optional (not recommended, use Crawler instead)
+
+### Step 4: Execute ETL Jobs
+
+**Execution**: Via AWS Console or CLI
+
+**Job Sequence**:
+1. Run `uber-etl-extract-job`
+   - Reads raw CSV from S3
+   - Writes Parquet files to `processed-data/extracted/`
+
+2. Run `uber-etl-transform-job`
+   - Reads from `processed-data/extracted/`
+   - Transforms to star schema
+   - Writes 8 separate Parquet folders:
+     - `datetime_dim/`
+     - `passenger_count_dim/`
+     - `trip_distance_dim/`
+     - `rate_code_dim/`
+     - `pickup_location_dim/`
+     - `dropoff_location_dim/`
+     - `payment_type_dim/`
+     - `fact_table/`
+
+**Expected Result**: All Parquet files written to S3 in organized folder structure.
+
+### Step 5: Create Tables Using Glue Crawler
+
+**Script**: `05-create-glue-crawler.bat`
+
+**Actions**:
+- Creates two crawlers (idempotent - safe to run multiple times):
+  1. `uber-etl-crawler-extracted` - Crawls `processed-data/extracted/` (optional, for verification)
+  2. `uber-etl-crawler-curated` - Crawls 8 dimension/fact folders (main, required)
+
+**Process**:
+- Crawlers scan S3 folders
+- Automatically infer schema from Parquet files
+- Create tables in Glue Data Catalog
+- Tables are immediately available for Athena queries
+
+**Expected Result**: 8 tables in Glue Data Catalog (or 9 if extracted table is crawled).
+
+**Two-Stage Crawler Design**:
+- Extract job writes to `processed-data/extracted/`
+- Transform job reads from `extracted/` and writes to separate dimension/fact folders
+- Two separate crawlers handle each stage appropriately
+
+### Step 6: Query Data with Athena
+
+**Access**: AWS Athena Console
+
+**Actions**:
+- Select database: `uber_data_db`
+- Execute SQL queries against created tables
+- Export results as needed
+
+**Example Queries**:
+```sql
+-- List all tables
+SHOW TABLES IN uber_data_db;
+
+-- Query fact table
+SELECT * FROM uber_data_db.fact_table LIMIT 10;
+
+-- Revenue analysis
+SELECT 
+    COUNT(*) as total_trips,
+    SUM(total_amount) as total_revenue,
+    AVG(total_amount) as avg_fare
+FROM uber_data_db.fact_table;
 ```
-- Tạo Glue database: `uber_data_db`
-- Tạo Extract job
-- Tạo Transform job
-- **Load job là OPTIONAL** (khuyến nghị bỏ qua, dùng Crawler)
 
-### Step 4: Chạy ETL Jobs
-Trong AWS Console hoặc CLI:
-1. Chạy `uber-etl-extract-job` → Ghi Parquet vào `processed-data/extracted/`
-2. Chạy `uber-etl-transform-job` → Ghi 8 tables vào `processed-data/`
+### Step 7: Connect Power BI for Visualization
 
-**Kết quả:** S3 có đủ Parquet files
+**Process**:
+1. Install Power BI Desktop
+2. Connect to Amazon Athena using ODBC driver
+3. Import tables from `uber_data_db`
+4. Create data model and relationships
+5. Build dashboards and reports
+6. Publish to Power BI Service (optional)
 
-### Step 5: Tạo Tables bằng Crawler (RECOMMENDED)
-```bash
-05-create-glue-crawler.bat
-```
-- Tạo **2 crawlers** (idempotent - chạy nhiều lần không lỗi):
-  1. `uber-etl-crawler-extracted` - Crawl `processed-data/extracted/` (optional, để verify)
-  2. `uber-etl-crawler-curated` - Crawl 8 folders dim/fact (main, required)
-- Crawler tự động tạo tables trong Glue Data Catalog
-- Tables sẵn sàng query với Athena
+**Connection Details**:
+- Data Source: Amazon Athena
+- Database: `uber_data_db`
+- Authentication: AWS credentials
+- Region: Same as S3 bucket region
 
-**Kết quả:** Glue Data Catalog có 8 tables (hoặc 9 nếu crawl extracted)
+**Note**: Power BI connects directly to Athena, which queries the Glue Data Catalog tables. No additional data export is required.
 
-**Lưu ý về 2-stage crawler:**
-- Extract job ghi vào `processed-data/extracted/` → Parquet files
-- Transform job đọc từ `extracted/` và ghi vào 8 folders riêng:
-  - `datetime_dim/`, `passenger_count_dim/`, `trip_distance_dim/`
-  - `rate_code_dim/`, `pickup_location_dim/`, `dropoff_location_dim/`
-  - `payment_type_dim/`, `fact_table/`
-- Script tự động tạo 2 crawlers riêng để xử lý đúng từng stage
+### Step 8: Re-run Crawler (When Needed)
 
-### Step 6: Query với Athena
-- Chọn database: `uber_data_db`
-- Query các tables đã tạo
+**Script**: `06-run-crawler-curated.bat`
 
-### Step 6b: Chạy lại Crawler (nếu cần)
-```bash
-06-run-crawler-curated.bat
-```
-- Chỉ start crawler curated (không tạo lại)
-- Dùng khi đã chạy Transform job lại và muốn update tables
+**Use Case**: After re-running Transform job to update data
 
----
+**Actions**:
+- Starts the curated crawler (does not recreate it)
+- Updates table schemas if structure changed
+- Refreshes metadata in Glue Data Catalog
 
-## Quy trình thay thế (nếu dùng Load job)
+## Alternative Workflow: Using Load Job
 
-Nếu bạn muốn dùng Load job thay vì Crawler:
+If you prefer to use the Load job instead of Crawler:
 
-1. Chạy Step 1-4 như trên
-2. **Thay vì Step 5**, chạy `uber-etl-load-job`
-   - Load job đã được sửa để bind với Glue Catalog
-   - Sẽ tạo tables trong Glue Data Catalog
+1. Complete Steps 1-4 as described above
+2. Instead of Step 5, run `uber-etl-load-job`
+   - Load job must be configured to use Glue Catalog metastore
+   - Will create tables in Glue Data Catalog
 
-**Lưu ý:** Crawler vẫn được khuyến nghị hơn.
-
----
+**Note**: Crawler approach is still recommended for simplicity and reliability.
 
 ## Troubleshooting
 
-### Vấn đề: "Database có 0 tables"
+### Issue: Database Shows 0 Tables
 
-**Nguyên nhân:**
-1. Chưa chạy Crawler
-2. Crawler trỏ sai path
-3. IAM role thiếu quyền `glue:CreateTable`
-4. Load job chạy nhưng không bind với Glue Catalog (nếu dùng Load job)
+**Possible Causes**:
+1. Crawler has not been run
+2. Crawler target path is incorrect
+3. IAM role missing `glue:CreateTable` permission
+4. Load job not configured for Glue Catalog (if using Load job)
 
-**Giải pháp:**
-1. Chạy `05-create-glue-crawler.bat`
-2. Kiểm tra Crawler targets trỏ đúng `processed-data/`
-3. Kiểm tra IAM role có quyền Glue Catalog
-4. Nếu dùng Load job, đảm bảo đã cấu hình Glue Catalog metastore
+**Solutions**:
+1. Run `05-create-glue-crawler.bat`
+2. Verify crawler targets point to correct S3 paths
+3. Check IAM role permissions in AWS Console
+4. If using Load job, ensure Glue Catalog metastore is configured
 
-### Vấn đề: "Crawler chỉ tạo 1 table thay vì 8"
+### Issue: Crawler Creates Only 1 Table Instead of 8
 
-**Nguyên nhân:**
-- Crawler trỏ vào `processed-data/` root thay vì từng folder riêng
-- Hoặc crawler đang crawl `extracted/` thay vì các dim/fact folders
+**Possible Causes**:
+- Crawler pointing to root `processed-data/` instead of individual folders
+- Crawler crawling `extracted/` instead of dimension/fact folders
 
-**Giải pháp:**
-- Script `05-create-glue-crawler.bat` đã được cấu hình đúng:
-  - Crawler `uber-etl-crawler-curated` trỏ vào 8 folders riêng biệt
-  - Mỗi folder → 1 table
-  - Crawler `uber-etl-crawler-extracted` là optional (chỉ để verify)
+**Solution**:
+- Verify `05-create-glue-crawler.bat` configuration
+- Ensure `uber-etl-crawler-curated` targets all 8 folders separately
+- Each folder should map to one table
 
-### Vấn đề: "Phải chạy crawler 2 lần - lần 1 crawl extracted/, lần 2 crawl processed-data/"
+### Issue: Need to Run Crawler Twice
 
-**Nguyên nhân:**
-- Đây là workflow 2-stage:
-  1. Extract job → `processed-data/extracted/`
-  2. Transform job → `processed-data/*_dim/` và `fact_table/`
+**Explanation**:
+This is expected behavior for the two-stage workflow:
+1. First run: Crawl `extracted/` folder (optional verification)
+2. Second run: Crawl dimension/fact folders (main tables)
 
-**Giải pháp:**
-- Script `05-create-glue-crawler.bat` tự động tạo 2 crawlers riêng:
-  - Crawler extracted (optional) - chỉ cần chạy 1 lần để verify
-  - Crawler curated (main) - chạy sau mỗi lần Transform job
-- Sau lần đầu, chỉ cần chạy `06-run-crawler-curated.bat` để update tables
+**Solution**:
+- Script `05-create-glue-crawler.bat` creates both crawlers automatically
+- After initial setup, use `06-run-crawler-curated.bat` for updates
+- Only the curated crawler needs to run after Transform job updates
 
----
+## Data Flow Summary
 
-## Kiến trúc Data Flow
+1. **Extract Stage**: Raw CSV → Parquet in `extracted/` folder
+2. **Transform Stage**: Parquet → Star schema in 8 separate folders
+3. **Catalog Stage**: Crawler creates tables in Glue Data Catalog
+4. **Query Stage**: Athena queries tables via SQL
+5. **Visualization Stage**: Power BI connects to Athena for dashboards
 
-```
-Raw CSV (S3)
-    ↓
-[Extract Job] → Parquet (processed-data/extracted/)
-    ↓
-[Transform Job] → 8 Parquet folders (processed-data/*_dim/, fact_table/)
-    ↓
-[Crawler] → 8 Tables in Glue Data Catalog
-    ↓
-[Athena] → Query tables
-    ↓
-[QuickSight] → Visualize
-```
+## Deployment Checklist
 
----
+- [ ] Step 1: Upload data and scripts to S3
+- [ ] Step 2: Create IAM role with Glue Catalog permissions
+- [ ] Step 3: Create Glue database and jobs
+- [ ] Step 4: Execute Extract and Transform jobs
+- [ ] Step 5: Run crawler creation script (creates 8 tables)
+  - [ ] Verify crawler extracted (optional)
+  - [ ] Verify crawler curated (main)
+- [ ] Step 6: Verify tables in Glue Console (8 tables expected)
+- [ ] Step 7: Test queries in Athena
+- [ ] Step 8: Connect Power BI to Athena
+- [ ] Step 9: Build Power BI dashboards
+- [ ] (Optional) Step 10: Re-run crawler if data updated
 
-## Checklist
-
-- [ ] Step 1: Upload data và scripts
-- [ ] Step 2: Tạo IAM role với đủ quyền Glue
-- [ ] Step 3: Tạo database và jobs (bỏ qua Load job)
-- [ ] Step 4: Chạy Extract + Transform jobs
-- [ ] Step 5: **Chạy 05-create-glue-crawler.bat để tạo crawlers** ← QUAN TRỌNG
-  - [ ] Crawler extracted (optional - để verify)
-  - [ ] Crawler curated (main - tạo 8 tables)
-- [ ] Step 6: Verify tables trong Glue Console (8 tables)
-- [ ] Step 7: Query với Athena
-- [ ] (Optional) Step 6b: Chạy 06-run-crawler-curated.bat nếu cần update tables
-
----
-
-## Tài liệu tham khảo
+## References
 
 - [AWS Glue Crawler Documentation](https://docs.aws.amazon.com/glue/latest/dg/add-crawler.html)
 - [AWS Glue Data Catalog](https://docs.aws.amazon.com/glue/latest/dg/catalog-and-crawler.html)
-- [Athena Query Best Practices](https://docs.aws.amazon.com/athena/latest/ug/best-practices.html)
+- [Amazon Athena Best Practices](https://docs.aws.amazon.com/athena/latest/ug/best-practices.html)
+- [Power BI Amazon Athena Connector](https://docs.microsoft.com/en-us/power-bi/connect-data/service-connect-to-amazon-athena)
