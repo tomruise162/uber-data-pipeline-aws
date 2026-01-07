@@ -1,0 +1,64 @@
+# Documentation and Guide Files (not needed in source code)
+3_PAGE_DASHBOARD_SUMMARY.md
+CAREER_ROLES_ANALYSIS.md
+CV_TEMPLATE.md
+DATA_ANALYST_ENHANCEMENTS.md
+DAX_FORMULAS_QUICK_REFERENCE.txt
+POWER_BI_VISUALIZATION_GUIDE.md
+VISUALIZATION_MAPPING.md
+
+# AWS Migration Guide Files
+aws-migration/*.md
+aws-migration/**/*.md
+!aws-migration/README.md
+aws-migration/role-arn.txt
+
+# Large Data Files
+data/*.csv
+data/**/*.csv
+
+# Power BI Report Files (large binary files)
+report/*.pbix
+report/*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# AWS
+.aws/
+*.pem
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
